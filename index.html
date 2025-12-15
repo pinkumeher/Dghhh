@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pinku Particle Universe</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Courier New', Courier, monospace; }
+        canvas { display: block; }
+        
+        #ui-container {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #fff;
+            pointer-events: none;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #00ffff;
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.2);
+            max-width: 300px;
+            z-index: 10;
+        }
+        
+        h1 { margin: 0; font-size: 1.8rem; text-transform: uppercase; 
+             background: linear-gradient(90deg, #ff00cc, #00ffff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        
+        h2 { margin: 5px 0 15px 0; font-size: 1rem; color: #ccc; }
+
+        .status-line { margin: 10px 0; font-size: 1.1rem; }
+        #shape-name { color: #ffff00; font-weight: bold; text-shadow: 0 0 5px #ff0000; }
+
+        #webcam-feed {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 160px;
+            height: 120px;
+            transform: scaleX(-1);
+            border: 2px solid #00ffff;
+            border-radius: 8px;
+            opacity: 0.7;
+            z-index: 10;
+        }
+
+        .controls { margin-top: 15px; font-size: 0.85rem; color: #aaa; }
+        .key { color: #fff; font-weight: bold; background: #333; padding: 2px 6px; border-radius: 4px; }
+    </style>
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- MediaPipe Hands -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div id="ui-container">
+        <h1>Pinku Particles</h1>
+        <h2>Ultimate Collection</h2>
+        <div class="status-line">Model: <span id="shape-name">Loading...</span></div>
+        <hr style="border: 0; border-top: 1px solid #444;">
+        <div class="controls">
+            <p>👋 Move Hand to Rotate</p>
+            <p>🤏 Pinch to Collapse</p>
+            <p>✊ <b>Make Fist</b> to Change Model</p>
+        </div>
+    </div>
+
+    <video id="webcam-feed" autoplay playsinline></video>
+
+<script>
+    // --- CONFIGURATION ---
+    const PARTICLE_COUNT = 25000;
+    const PARTICLE_SIZE = 0.08;
+    const SMOOTHING = 0.08; // How fast particles move to target (0.01 - 1.0)
+    
+    // --- THREE.JS SETUP ---
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x000000, 0.02);
+
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.z = 20;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    document.body.appendChild(renderer.domElement);
+
+    // --- PARTICLE SYSTEM ---
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(PARTICLE_COUNT * 3);
+    const colors = new Float32Array(PARTICLE_COUNT * 3);
+    
+    // Target positions buffer (where particles want to go)
+    const targetPositions = new Float32Array(PARTICLE_COUNT * 3);
+    
+    // Initial Random Explosion
+    for (let i = 0; i < PARTICLE_COUNT * 3; i++) {
+        positions[i] = (Math.random() - 0.5) * 100;
+        targetPositions[i] = positions[i];
+        colors[i] = 1.0;
+    }
+
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+    const material = new THREE.PointsMaterial({
+        size: PARTICLE_SIZE,
+        vertexColors: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        transparent: true,
+        opacity: 0.8
+    });
+
+    const particleSystem = new THREE.Points(geometry, material);
+    scene.add(particleSystem);
+
+    // --- SHAPE GENERATORS ---
+
+    // 1. Text Generator for "PINKU"
+    function getPinkuTextPoint(i) {
+        // 5x5 Grid Font: 1=Fill, 0=Empty
+        const P = [[1,1,1,1,0],[1,0,0,0,1],[1,1,1,1,0],[1,0,0,0,0],[1,0,0,0,0]];
+        const I = [[0,1,1,1,0],[0,0,1,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,1,1,1,0]];
+        const N = [[1,0,0,0,1],[1,1,0,0,1],[1,0,1,0,1],[1,0,0,1,1],[1,0,0,0,1]];
+        const K = [[1,0,0,1,0],[1,0,1,0,0],[1,1,0,0,0],[1,0,1,0,0],[1,0,0,1,0]];
+        const U = [[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0]];
+
+        const letters = [P, I, N, K, U];
+        const spacing = 5;
+        const scale = 0.8;
+        const startX = -((letters.length * spacing * scale) / 2) - 2;
+
+        const randomLetterIdx = i % letters.length;
+        const letterGrid = letters[randomLetterIdx];
+        
+        let validPointFound = false;
+        let px = 0, py = 0;
+        let attempt = 0;
+
+        // Try to place particle on a "1" pixel
+        while(!validPointFound && attempt < 50) {
+            const rRow = Math.floor(Math.random() * 5);
+            const rCol = Math.floor(Math.random() * 5);
+            if(letterGrid[rRow][rCol] === 1) {
+                px = (rCol * scale) + (startX + randomLetterIdx * spacing * scale) + (Math.random()-0.5)*0.5;
+                py = ((4-rRow) * scale) - 2 + (Math.random()-0.5)*0.5;
+                validPointFound = true;
+            }
+            attempt++;
+        }
+        
+        if(!validPointFound) return {x: (Math.random()-0.5)*10, y: (Math.random()-0.5)*10, z:0};
+
+        return { x: px * 1.5, y: py * 1.5, z: (Math.random() - 0.5) * 1.5 };
+    }
+
+    // 2. Sudarshan Chakra
+    function getSudarshanChakraPoint(i) {
+        const angle = Math.random() * Math.PI * 2;
+        const rBase = 6 + Math.random() * 2;
+        const spikes = 12;
+        const spikeHeight = Math.abs(Math.sin(angle * spikes)) * 2.5; 
+        const r = rBase + spikeHeight;
+        
+        return {
+            x: Math.cos(angle) * r,
+            y: Math.sin(angle) * r,
+            z: (Math.random() - 0.5) * 0.2
+        };
+    }
+
+    // 3. Trishul
+    function getTrishulPoint(i) {
+        const choice = Math.random();
+        if (choice < 0.6) { // Staff
+            return { x: (Math.random()-0.5)*0.4, y: (Math.random()*16)-10, z: (Math.random()-0.5)*0.4 };
+        } else if (choice < 0.8) { // Side Prongs
+            const t = Math.random() * Math.PI;
+            const xOffset = t > Math.PI/2 ? -2.5 : 2.5;
+            return {
+                x: Math.cos(t) * 2.5 + xOffset,
+                y: 4 + Math.sin(t) * 4,
+                z: (Math.random() - 0.5) * 0.3
+            };
+        } else { // Center Prong
+            return { x: (Math.random()-0.5)*0.3, y: 6 + Math.random()*4, z: (Math.random()-0.5)*0.3 };
+        }
+    }
+
+    // 4. Brahmastra (Torus Knot)
+    function getBrahmastraPoint(i) {
+        const t = (i / PARTICLE_COUNT) * Math.PI * 2 * 20;
+        const p = 2, q = 3;
+        const scale = 2.5;
+        const r = 2 + Math.cos(q * t);
+        return {
+            x: scale * r * Math.cos(p * t) + (Math.random()-0.5),
+            y: scale * r * Math.sin(p * t) + (Math.random()-0.5),
+            z: scale * Math.sin(q * t) + (Math.random()-0.5)
+        };
+    }
+
+    // 5. Aeroplane
+    function getAeroplanePoint(i) {
+        const r = Math.random();
+        if (r < 0.5) { // Body
+            const len = 12;
+            return { x: Math.cos(Math.random()*6.28), y: Math.sin(Math.random()*6.28), z: (Math.random()*len)-(len/2) };
+        } else if (r < 0.8) { // Wings
+            const span = 14;
+            const x = (Math.random()*span)-(span/2);
+            return { x: x, y: 0, z: (Math.random()*4)-1 };
+        } else { // Tail
+            return { x: (Math.random()-0.5)*5, y: Math.random()*3, z: -5+(Math.random()*2) };
+        }
+    }
+
+    // 6. Bow and Arrow
+    function getBowAndArrowPoint(i) {
+        const r = Math.random();
+        if (r < 0.6) { // Bow
+            const t = (Math.random() * Math.PI) - (Math.PI/2);
+            return { x: Math.cos(t)*2, y: Math.sin(t)*8, z: (Math.random()-0.5)*0.5 };
+        } else { // Arrow
+            return { x: (Math.random()*12)-6, y: 0, z: 0 };
+        }
+    }
+
+    // 7. Sphere
+    function getSpherePoint(i) {
+        const u = Math.random();
+        const v = Math.random();
+        const theta = 2 * Math.PI * u;
+        const phi = Math.acos(2 * v - 1);
+        const r = 6;
+        return {
+            x: r * Math.sin(phi) * Math.cos(theta),
+            y: r * Math.sin(phi) * Math.sin(theta),
+            z: r * Math.cos(phi)
+        };
+    }
+
+    // 8. DNA
+    function getDNAPoint(i) {
+        const len = 14;
+        const y = ((i / PARTICLE_COUNT) * len) - (len/2);
+        const radius = 3;
+        const angle = y * 4;
+        const offset = (i % 2 === 0) ? 0 : Math.PI; 
+        return {
+            x: Math.cos(angle + offset) * radius + (Math.random()-0.5),
+            y: y,
+            z: Math.sin(angle + offset) * radius + (Math.random()-0.5)
+        };
+    }
+
+    // 9. Cube
+    function getQuantumCubePoint(i) {
+        const size = 3.5;
+        return {
+            x: (Math.random() - 0.5) * 2 * size,
+            y: (Math.random() - 0.5) * 2 * size,
+            z: (Math.random() - 0.5) * 2 * size
+        };
+    }
+
+    // 10. Pyramid
+    function getPyramidPoint(i) {
+        const height = 10;
+        const y = (Math.random() * height) - (height/2);
+        const normY = (y + (height/2)) / height; 
+        const size = 7 * (1 - normY);
+        return {
+            x: (Math.random() - 0.5) * 2 * size,
+            y: y,
+            z: (Math.random() - 0.5) * 2 * size
+        };
+    }
+
+    // 11. Heart
+    function getHeartPoint(i) {
+        const t = (Math.random() * Math.PI * 2) - Math.PI;
+        const scale = 0.4;
+        const r = 16 * Math.pow(Math.sin(t), 3);
+        const yBase = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
+        return {
+            x: r * scale + (Math.random()-0.5),
+            y: yBase * scale + (Math.random()-0.5),
+            z: (Math.random() - 0.5) * 4
+        };
+    }
+
+    // 12. Wave
+    function getSineWavePoint(i) {
+        const size = 12;
+        const x = (Math.random() - 0.5) * size;
+        const z = (Math.random() - 0.5) * size;
+        const y = Math.sin(x * 0.8) * Math.cos(z * 0.8) * 3;
+        return { x, y, z };
+    }
+
+    // 13. Galaxy
+    function getGalaxyPoint(i) {
+        const arms = 5;
+        const armIndex = i % arms;
+        const maxR = 10;
+        const r = Math.random() * maxR;
+        const spin = 4.0; 
+        const angle = (r / maxR) * Math.PI * 2 * spin + (armIndex * (Math.PI * 2 / arms));
+        return { 
+            x: Math.cos(angle) * r + (Math.random()-0.5), 
+            y: (Math.random() - 0.5) * (maxR - r) * 0.5,
+            z: Math.sin(angle) * r + (Math.random()-0.5)
+        };
+    }
+
+    // --- SHAPE MANAGER ---
+    const shapes = [
+        { name: 'PINKU (Name)', func: getPinkuTextPoint },
+        { name: 'Sudarshan Chakra', func: getSudarshanChakraPoint },
+        { name: 'Trishul (Shiva)', func: getTrishulPoint },
+        { name: 'Brahmastra', func: getBrahmastraPoint },
+        { name: 'Aeroplane', func: getAeroplanePoint },
+        { name: 'Bow & Arrow', func: getBowAndArrowPoint },
+        { name: 'Sphere', func: getSpherePoint },
+        { name: 'DNA Helix', func: getDNAPoint },
+        { name: 'Quantum Cube', func: getQuantumCubePoint },
+        { name: 'Ancient Pyramid', func: getPyramidPoint },
+        { name: 'Heart', func: getHeartPoint },
+        { name: 'Sine Wave', func: getSineWavePoint },
+        { name: 'Galaxy', func: getGalaxyPoint }
+    ];
+
+    let currentShapeIndex = 0;
+
+    function updateTargetShape() {
+        const shapeObj = shapes[currentShapeIndex];
+        document.getElementById('shape-name').innerText = shapeObj.name;
+        
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            const p = shapeObj.func(i);
+            targetPositions[i * 3] = p.x;
+            targetPositions[i * 3 + 1] = p.y;
+            targetPositions[i * 3 + 2] = p.z;
+        }
+        triggerColorPulse();
+    }
+
+    function triggerColorPulse() {
+        const colorsAttr = geometry.attributes.color;
+        const array = colorsAttr.array;
+        
+        // Pick a theme based on index
+        let rBase, gBase, bBase;
+        
+        if(currentShapeIndex < 4) { // Weapons/Mythology -> Gold/Fiery
+            rBase = 1.0; gBase = 0.5; bBase = 0.0;
+        } else if (currentShapeIndex === 10) { // Heart -> Red/Pink
+            rBase = 1.0; gBase = 0.0; bBase = 0.5;
+        } else { // Sci-Fi -> Cyan/Purple
+            rBase = 0.0; gBase = 0.8; bBase = 1.0;
+        }
+
+        for(let i=0; i<PARTICLE_COUNT; i++) {
+            const idx = i*3;
+            array[idx] = rBase + (Math.random()-0.5)*0.5;
+            array[idx+1] = gBase + (Math.random()-0.5)*0.5;
+            array[idx+2] = bBase + (Math.random()-0.5)*0.5;
+        }
+        colorsAttr.needsUpdate = true;
+    }
+
+    // Initialize first shape
+    updateTargetShape();
+
+    // --- INPUT HANDLING ---
+    let pinchStrength = 0;
+    let handX = 0, handY = 0;
+    let isFist = false;
+    let lastFistTime = 0;
+
+    const videoElement = document.getElementById('webcam-feed');
+    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+
+    hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6
+    });
+
+    hands.onResults((results) => {
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            const lm = results.multiHandLandmarks[0];
+            
+            // 1. Rotation (Index Finger Tip)
+            const x = (lm[8].x - 0.5) * 2; // -1 to 1
+            const y = -(lm[8].y - 0.5) * 2;
+            handX += (x - handX) * 0.1;
+            handY += (y - handY) * 0.1;
+
+            // 2. Pinch (Distance between thumb and index)
+            const dx = lm[4].x - lm[8].x;
+            const dy = lm[4].y - lm[8].y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            // Map distance 0.02-0.15 to strength 1.0-0.0
+            pinchStrength = 1 - Math.min(Math.max(dist / 0.15, 0), 1);
+
+            // 3. Fist Logic (Simple check: Are fingertips below knuckles?)
+            let curled = 0;
+            if (lm[12].y > lm[10].y) curled++; // Middle
+            if (lm[16].y > lm[14].y) curled++; // Ring
+            if (lm[20].y > lm[18].y) curled++; // Pinky
+            if (lm[8].y > lm[6].y) curled++;   // Index
+
+            const now = Date.now();
+            if (curled >= 3) {
+                if (!isFist && now - lastFistTime > 1500) {
+                    currentShapeIndex = (currentShapeIndex + 1) % shapes.length;
+                    updateTargetShape();
+                    lastFistTime = now;
+                }
+                isFist = true;
+            } else {
+                isFist = false;
+            }
+        } else {
+            // No hands detected, drift slowly back
+            pinchStrength *= 0.9;
+        }
+    });
+
+    const cameraUtils = new Camera(videoElement, {
+        onFrame: async () => { await hands.send({image: videoElement}); },
+        width: 320,
+        height: 240
+    });
+    cameraUtils.start();
+
+    // --- ANIMATION LOOP ---
+    const clock = new THREE.Clock();
+
+    function animate() {
+        requestAnimationFrame(animate);
+        
+        const time = clock.getElapsedTime();
+        
+        // Access Buffer Attributes
+        const posAttr = geometry.attributes.position;
+        const currentPos = posAttr.array;
+
+        // Rotate System based on hand or idle
+        particleSystem.rotation.y = -handX * 2 + time * 0.1;
+        particleSystem.rotation.x = handY * 1.5;
+
+        // Physics Loop
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+            const idx = i * 3;
+            
+            let tx = targetPositions[idx];
+            let ty = targetPositions[idx+1];
+            let tz = targetPositions[idx+2];
+
+            // Apply Pinch Effect (Suck particles to center)
+            if (pinchStrength > 0.05) {
+                const strength = pinchStrength * pinchStrength; // Non-linear feel
+                tx = tx * (1 - strength);
+                ty = ty * (1 - strength);
+                tz = tz * (1 - strength);
+            }
+
+            // Move particle towards target (Lerp)
+            currentPos[idx] += (tx - currentPos[idx]) * SMOOTHING;
+            currentPos[idx+1] += (ty - currentPos[idx+1]) * SMOOTHING;
+            currentPos[idx+2] += (tz - currentPos[idx+2]) * SMOOTHING;
+
+            // Add slight noise (Brownian motion)
+            currentPos[idx] += (Math.random() - 0.5) * 0.02;
+            currentPos[idx+1] += (Math.random() - 0.5) * 0.02;
+            currentPos[idx+2] += (Math.random() - 0.5) * 0.02;
+        }
+
+        posAttr.needsUpdate = true;
+        renderer.render(scene, camera);
+    }
+
+    // Handle Window Resize
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // Start
+    animate();
+
+</script>
+</body>
+</html>
